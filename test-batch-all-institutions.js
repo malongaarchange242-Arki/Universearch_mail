@@ -112,7 +112,7 @@ async function testBatchSend() {
     try {
         const health = await makeRequest('GET', '/health');
         if (health.status === 200) {
-            log('✅ Service actif sur localhost:3010', 'green');
+            log('✅ Service actif sur universearch-mail.onrender.com', 'green');
         } else {
             log('❌ Service indisponible', 'red');
             return;

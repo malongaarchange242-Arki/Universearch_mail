@@ -18,9 +18,9 @@
 const http = require('http');
 
 const config = {
-    host: 'localhost',
-    port: 3010,
-    baseUrl: 'http://localhost:3010'
+    host: 'universearch-mail.onrender.com',
+    port: 443,
+    baseUrl: 'https://universearch-mail.onrender.com'
 };
 
 // Colors

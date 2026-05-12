@@ -301,6 +301,13 @@ export const sendRecommendationEmails = async (
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown mailer error';
+      console.error('Mail send failed', {
+        target_id: institution.target_id,
+        target_name: institution.target_name,
+        target_type: institution.target_type,
+        email,
+        error: message,
+      });
       results.push({
         target_id: institution.target_id,
         target_name: institution.target_name,

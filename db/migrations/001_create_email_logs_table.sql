@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS public.email_logs (
   
   -- Email details
   raison TEXT NULL,
+  custom_message TEXT NULL,
   institution_name TEXT NOT NULL,
   institution_id TEXT NULL,
   institution_type TEXT NULL,
@@ -50,6 +51,10 @@ CREATE INDEX IF NOT EXISTS idx_email_logs_status
 
 -- Enable RLS (Row Level Security) if needed
 ALTER TABLE public.email_logs ENABLE ROW LEVEL SECURITY;
+
+-- Add custom_message column if it doesn't exist (for existing tables)
+ALTER TABLE public.email_logs
+ADD COLUMN IF NOT EXISTS custom_message TEXT NULL;
 
 -- Create a policy to allow authenticated users to read
 CREATE POLICY "Allow authenticated users to read email_logs" 

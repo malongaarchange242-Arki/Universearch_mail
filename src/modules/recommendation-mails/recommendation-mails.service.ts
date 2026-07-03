@@ -330,6 +330,7 @@ export const sendRecommendationEmails = async (
               quartier: enrichedPayload.candidate.quartier || null,
               user_type: enrichedPayload.candidate.user_type || null,
               raison: enrichedPayload.candidate.reason || null,
+              custom_message: enrichedPayload.custom_message || null,
               institution_name: institution.target_name,
               institution_id: institution.target_id,
               institution_type: institution.target_type,

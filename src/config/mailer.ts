@@ -17,55 +17,103 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-export const createMailer = () => {
-  // Lazy require so the service can compile even before local npm install is done.
-  // The dependency is still required at runtime for actual email sending.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const nodemailer = require('nodemailer');
-
-  const host = getEnv(['SMTP_HOST', 'EMAIL_SMTP_HOST']);
-  const port = parseNumber(getEnv(['SMTP_PORT', 'EMAIL_SMTP_PORT']), 587);
-  const secure = parseBoolean(getEnv(['SMTP_SECURE', 'EMAIL_SMTP_SECURE']), port === 465);
-  const user = getEnv(['SMTP_USER', 'EMAIL_SMTP_USER']);
-  const pass = getEnv(['SMTP_PASS', 'EMAIL_SMTP_PASS']);
-  const from = getEnv(['SMTP_FROM', 'EMAIL_FROM'], 'Universearch <no-reply@universearch.com>');
-  const connectionTimeout = parseNumber(getEnv(['SMTP_CONNECTION_TIMEOUT', 'EMAIL_SMTP_CONNECTION_TIMEOUT']), 60000);
-  const greetingTimeout = parseNumber(getEnv(['SMTP_GREETING_TIMEOUT', 'EMAIL_SMTP_GREETING_TIMEOUT']), 60000);
-  const socketTimeout = parseNumber(getEnv(['SMTP_SOCKET_TIMEOUT', 'EMAIL_SMTP_SOCKET_TIMEOUT']), 60000);
-  const isDevelopment = process.env.NODE_ENV !== 'production';
-
-  // In development, allow placeholder credentials and use mock transporter
-  if (!host || !user || !pass) {
-    if (isDevelopment) {
-      console.warn('⚠️  Development mode: Using mock email transporter');
-      console.warn('   Emails will be logged but NOT sent');
-      console.warn('   For production, set SMTP_HOST, SMTP_USER, SMTP_PASS');
-      
-      // Return mock transporter for development
-      return {
-        sendMail: async (mailOptions: any) => {
-          console.log('\n📧 [MOCK EMAIL - DEV MODE]');
-          console.log(`   To: ${mailOptions.to}`);
-          console.log(`   Subject: ${mailOptions.subject}`);
-          if (mailOptions.attachments?.length) {
-            console.log(`   Attachments: ${mailOptions.attachments.length} file(s)`);
-          }
-          console.log(`   Time: ${new Date().toISOString()}`);
-          console.log('   Status: Would be sent in production\n');
-          
-          return {
-            messageId: `mock-${Date.now()}@dev.local`,
-            response: 'Mock send - development mode only',
-          };
-        },
-      };
-    } else {
-      throw new Error('Missing SMTP configuration in environment variables');
+const createBrevoMailer = ({ brevoApiKey, from }: { brevoApiKey: string; from: string }) => {
+  const parseAddress = (value: string | string[]) => {
+    if (typeof value === 'string') {
+      return [{ email: value }];
     }
-  }
+    return value.map((address) => ({ email: address }));
+  };
 
-  console.log(`📧 SMTP transporter configured: ${host}:${port} secure=${secure} timeouts=${connectionTimeout}/${greetingTimeout}/${socketTimeout}ms`);
+  const parseSender = () => {
+    const match = from.match(/^(.*)<([^>]+)>$/);
+    if (!match) {
+      return { email: from };
+    }
+    return {
+      name: match[1].trim(),
+      email: match[2].trim(),
+    };
+  };
 
+  const toBase64 = (content: unknown) => {
+    if (Buffer.isBuffer(content)) return content.toString('base64');
+    if (typeof content === 'string') return Buffer.from(content).toString('base64');
+    throw new Error('Unsupported attachment content type for Brevo API');
+  };
+
+  return {
+    sendMail: async (mailOptions: any) => {
+      const payload: any = {
+        sender: parseSender(),
+        to: parseAddress(mailOptions.to),
+        subject: mailOptions.subject,
+        htmlContent: mailOptions.html,
+      };
+
+      if (mailOptions.cc) payload.cc = parseAddress(mailOptions.cc);
+      if (mailOptions.bcc) payload.bcc = parseAddress(mailOptions.bcc);
+      if (mailOptions.text) payload.textContent = mailOptions.text;
+      if (mailOptions.replyTo) payload.replyTo = { email: mailOptions.replyTo };
+
+      if (mailOptions.attachments?.length) {
+        payload.attachment = mailOptions.attachments.map((attachment: any) => ({
+          name: attachment.filename,
+          content: toBase64(attachment.content),
+          type: attachment.contentType || 'application/octet-stream',
+        }));
+      }
+
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': brevoApiKey,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = await response.text();
+      let json: any;
+      try {
+        json = JSON.parse(body);
+      } catch {
+        json = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Brevo API error ${response.status}: ${json?.message || response.statusText || body}`);
+      }
+
+      return {
+        messageId: json?.messageId || '',
+        response: `Brevo API ${response.status}`,
+      };
+    },
+  };
+};
+
+const createSmtpMailer = ({
+  nodemailer,
+  host,
+  port,
+  secure,
+  user,
+  pass,
+  connectionTimeout,
+  greetingTimeout,
+  socketTimeout,
+}: {
+  nodemailer: any;
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
+}) => {
   const buildTransportOptions = (smtpPort: number, smtpSecure: boolean) => ({
     host,
     port: smtpPort,
@@ -79,7 +127,7 @@ export const createMailer = () => {
     socketTimeout,
     requireTLS: parseBoolean(getEnv(['SMTP_REQUIRE_TLS', 'EMAIL_SMTP_REQUIRE_TLS']), true),
     tls: {
-      rejectUnauthorized: false, // Required for Gmail and some SMTP servers
+      rejectUnauthorized: false,
     },
   });
 
@@ -90,7 +138,7 @@ export const createMailer = () => {
 
   let cachedTransport: any | null = null;
 
-  const getWorkingTransport = async () => {
+  const getWorkingSmtpTransport = async () => {
     if (cachedTransport) return cachedTransport;
 
     let lastError: unknown;
@@ -110,11 +158,79 @@ export const createMailer = () => {
     throw lastError instanceof Error ? lastError : new Error('SMTP verification failed');
   };
 
-  // Production mode: use real SMTP
   return {
     sendMail: async (mailOptions: any) => {
-      const transporter = await getWorkingTransport();
+      const transporter = await getWorkingSmtpTransport();
       return transporter.sendMail(mailOptions);
     },
   };
+};
+
+export const createMailer = () => {
+  // Lazy require so the service can compile even before local npm install is done.
+  // The dependency is still required at runtime for actual email sending.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const nodemailer = require('nodemailer');
+
+  const host = getEnv(['SMTP_HOST', 'EMAIL_SMTP_HOST']);
+  const port = parseNumber(getEnv(['SMTP_PORT', 'EMAIL_SMTP_PORT']), 587);
+  const secure = parseBoolean(getEnv(['SMTP_SECURE', 'EMAIL_SMTP_SECURE']), port === 465);
+  const user = getEnv(['SMTP_USER', 'EMAIL_SMTP_USER']);
+  const pass = getEnv(['SMTP_PASS', 'EMAIL_SMTP_PASS']);
+  const brevoApiKey = getEnv(['BREVO_API_KEY', 'EMAIL_BREVO_API_KEY']);
+  const from: string = getEnv(['SMTP_FROM', 'EMAIL_FROM'], 'Universearch <no-reply@universearch.com>') as string;
+  const connectionTimeout = parseNumber(getEnv(['SMTP_CONNECTION_TIMEOUT', 'EMAIL_SMTP_CONNECTION_TIMEOUT']), 60000);
+  const greetingTimeout = parseNumber(getEnv(['SMTP_GREETING_TIMEOUT', 'EMAIL_SMTP_GREETING_TIMEOUT']), 60000);
+  const socketTimeout = parseNumber(getEnv(['SMTP_SOCKET_TIMEOUT', 'EMAIL_SMTP_SOCKET_TIMEOUT']), 60000);
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+
+  console.log(`🔑 BREVO_API_KEY present: ${Boolean(brevoApiKey)}`);
+
+  if (brevoApiKey) {
+    console.log('📧 Using Brevo API transport');
+    return createBrevoMailer({ brevoApiKey, from });
+  }
+
+  // In development, allow placeholder credentials and use mock transporter
+  if (!host || !user || !pass) {
+    if (isDevelopment) {
+      console.warn('⚠️  Development mode: Using mock email transporter');
+      console.warn('   Emails will be logged but NOT sent');
+      console.warn('   For production, set SMTP_HOST, SMTP_USER, SMTP_PASS');
+
+      return {
+        sendMail: async (mailOptions: any) => {
+          console.log('\n📧 [MOCK EMAIL - DEV MODE]');
+          console.log(`   To: ${mailOptions.to}`);
+          console.log(`   Subject: ${mailOptions.subject}`);
+          if (mailOptions.attachments?.length) {
+            console.log(`   Attachments: ${mailOptions.attachments.length} file(s)`);
+          }
+          console.log(`   Time: ${new Date().toISOString()}`);
+          console.log('   Status: Would be sent in production\n');
+
+          return {
+            messageId: `mock-${Date.now()}@dev.local`,
+            response: 'Mock send - development mode only',
+          };
+        },
+      };
+    }
+
+    throw new Error('Missing SMTP configuration in environment variables');
+  }
+
+  console.log(`📧 SMTP transporter configured: ${host}:${port} secure=${secure} timeouts=${connectionTimeout}/${greetingTimeout}/${socketTimeout}ms`);
+
+  return createSmtpMailer({
+    nodemailer,
+    host,
+    port,
+    secure,
+    user,
+    pass,
+    connectionTimeout,
+    greetingTimeout,
+    socketTimeout,
+  });
 };

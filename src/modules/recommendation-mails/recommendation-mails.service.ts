@@ -230,15 +230,39 @@ export const sendRecommendationEmails = async (
     app.mailer = createMailer();
   }
 
-  const workbookBuffer = await buildWorkbookBuffer(payload);
-  const contacts = await fetchInstitutionContacts(app, payload);
+  // Enrich candidate with profile data if quartier is missing
+  let enrichedPayload = { ...payload };
+  if (!payload.candidate.quartier && payload.candidate.email) {
+    try {
+      const { data: profile, error } = await app.supabase
+        .from('profiles')
+        .select('quartier')
+        .eq('email', payload.candidate.email)
+        .single();
+
+      if (!error && profile?.quartier) {
+        enrichedPayload.candidate = {
+          ...enrichedPayload.candidate,
+          quartier: profile.quartier,
+        };
+        console.log(`✅ Enriched candidate with quartier: ${profile.quartier}`);
+      } else if (error) {
+        console.warn(`⚠️ Could not enrich candidate with quartier: ${error.message}`);
+      }
+    } catch (exception) {
+      console.warn('Exception while enriching candidate:', exception);
+    }
+  }
+
+  const workbookBuffer = await buildWorkbookBuffer(enrichedPayload);
+  const contacts = await fetchInstitutionContacts(app, enrichedPayload);
   const contactsById = new Map(contacts.map((item) => [`${item.type}:${item.id}`, item]));
 
-  const fallbackNames = splitCandidateName(payload.candidate.full_name);
-  const safeFirstName = (payload.candidate.first_name || fallbackNames.firstName || 'candidat')
+  const fallbackNames = splitCandidateName(enrichedPayload.candidate.full_name);
+  const safeFirstName = (enrichedPayload.candidate.first_name || fallbackNames.firstName || 'candidat')
     .replace(/[^a-z0-9]+/gi, '_')
     .toLowerCase();
-  const safeLastName = (payload.candidate.last_name || fallbackNames.lastName || 'recommande')
+  const safeLastName = (enrichedPayload.candidate.last_name || fallbackNames.lastName || 'recommande')
     .replace(/[^a-z0-9]+/gi, '_')
     .toLowerCase();
   const attachmentFileName = `candidat_${safeFirstName}_${safeLastName}.xlsx`;
@@ -246,7 +270,7 @@ export const sendRecommendationEmails = async (
 
   const results: DeliveryResult[] = [];
 
-  for (const institution of payload.institutions) {
+  for (const institution of enrichedPayload.institutions) {
     const key = `${institution.target_type}:${institution.target_id}`;
     const contact = contactsById.get(key);
     const email = contact?.email || extractEmailFromText(contact?.contacts) || null;
@@ -279,7 +303,7 @@ export const sendRecommendationEmails = async (
       from,
       to: email,
       subject: `Universearch - Candidat recommande pour ${contact.name}`,
-      html: buildEmailHtml(payload, contact, payload.institutions.length),
+      html: buildEmailHtml(enrichedPayload, contact, enrichedPayload.institutions.length),
       attachments: [
         {
           filename: attachmentFileName,
@@ -294,33 +318,33 @@ export const sendRecommendationEmails = async (
       
       // Log email send to database
       try {
-        const fallbackNames = splitCandidateName(payload.candidate.full_name);
+        const fallbackNames = splitCandidateName(enrichedPayload.candidate.full_name);
         const { error: logError } = await app.supabase
           .from('email_logs')
           .insert([
             {
-              nom: payload.candidate.last_name || fallbackNames.lastName || null,
-              prenom: payload.candidate.first_name || fallbackNames.firstName || null,
-              email: payload.candidate.email || null,
-              telephone: payload.candidate.telephone || null,
-              quartier: payload.candidate.quartier || null,
-              user_type: payload.candidate.user_type || null,
-              raison: payload.candidate.reason || null,
+              nom: enrichedPayload.candidate.last_name || fallbackNames.lastName || null,
+              prenom: enrichedPayload.candidate.first_name || fallbackNames.firstName || null,
+              email: enrichedPayload.candidate.email || null,
+              telephone: enrichedPayload.candidate.telephone || null,
+              quartier: enrichedPayload.candidate.quartier || null,
+              user_type: enrichedPayload.candidate.user_type || null,
+              raison: enrichedPayload.candidate.reason || null,
               institution_name: institution.target_name,
               institution_id: institution.target_id,
               institution_type: institution.target_type,
               status: 'sent',
               message_id: mailResult?.messageId || null,
               brevo_response: mailResult?.response || null,
-              admin_email: payload.requested_by?.admin_email || null,
-              admin_name: payload.requested_by?.admin_name || null,
+              admin_email: enrichedPayload.requested_by?.admin_email || null,
+              admin_name: enrichedPayload.requested_by?.admin_name || null,
             },
           ]);
 
         if (logError) {
           console.warn('Failed to log email send:', logError);
         } else {
-          console.log(`📊 Logged email send for ${payload.candidate.email} to ${institution.target_name}`);
+          console.log(`📊 Logged email send for ${enrichedPayload.candidate.email} to ${institution.target_name}`);
         }
       } catch (logException) {
         console.warn('Exception while logging email:', logException);

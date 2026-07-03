@@ -66,11 +66,10 @@ export const createMailer = () => {
 
   console.log(`📧 SMTP transporter configured: ${host}:${port} secure=${secure} timeouts=${connectionTimeout}/${greetingTimeout}/${socketTimeout}ms`);
 
-  // Production mode: use real SMTP
-  return nodemailer.createTransport({
+  const buildTransportOptions = (smtpPort: number, smtpSecure: boolean) => ({
     host,
-    port,
-    secure,
+    port: smtpPort,
+    secure: smtpSecure,
     auth: {
       user,
       pass,
@@ -83,4 +82,39 @@ export const createMailer = () => {
       rejectUnauthorized: false, // Required for Gmail and some SMTP servers
     },
   });
+
+  const transportOptionsList = [
+    buildTransportOptions(port, secure),
+    buildTransportOptions(port === 465 ? 587 : 465, port === 465 ? false : true),
+  ].filter((option, index, options) => options.findIndex((candidate) => candidate.port === option.port && candidate.secure === option.secure) === index);
+
+  let cachedTransport: any | null = null;
+
+  const getWorkingTransport = async () => {
+    if (cachedTransport) return cachedTransport;
+
+    let lastError: unknown;
+    for (const transportOptions of transportOptionsList) {
+      const transporter = nodemailer.createTransport(transportOptions);
+      try {
+        await transporter.verify();
+        cachedTransport = transporter;
+        console.log(`📧 SMTP connection verified via ${transportOptions.host}:${transportOptions.port} secure=${transportOptions.secure}`);
+        return transporter;
+      } catch (error) {
+        lastError = error;
+        console.warn(`⚠️ SMTP verification failed for ${transportOptions.host}:${transportOptions.port} secure=${transportOptions.secure}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('SMTP verification failed');
+  };
+
+  // Production mode: use real SMTP
+  return {
+    sendMail: async (mailOptions: any) => {
+      const transporter = await getWorkingTransport();
+      return transporter.sendMail(mailOptions);
+    },
+  };
 };

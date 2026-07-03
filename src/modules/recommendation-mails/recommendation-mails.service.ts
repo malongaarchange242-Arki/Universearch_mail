@@ -290,7 +290,42 @@ export const sendRecommendationEmails = async (
     };
 
     try {
-      await app.mailer.sendMail(mailOptions);
+      const mailResult = await app.mailer.sendMail(mailOptions);
+      
+      // Log email send to database
+      try {
+        const fallbackNames = splitCandidateName(payload.candidate.full_name);
+        const { error: logError } = await app.supabase
+          .from('email_logs')
+          .insert([
+            {
+              nom: payload.candidate.last_name || fallbackNames.lastName || null,
+              prenom: payload.candidate.first_name || fallbackNames.firstName || null,
+              email: payload.candidate.email || null,
+              telephone: payload.candidate.telephone || null,
+              quartier: payload.candidate.quartier || null,
+              user_type: payload.candidate.user_type || null,
+              raison: payload.candidate.reason || null,
+              institution_name: institution.target_name,
+              institution_id: institution.target_id,
+              institution_type: institution.target_type,
+              status: 'sent',
+              message_id: mailResult?.messageId || null,
+              brevo_response: mailResult?.response || null,
+              admin_email: payload.requested_by?.admin_email || null,
+              admin_name: payload.requested_by?.admin_name || null,
+            },
+          ]);
+
+        if (logError) {
+          console.warn('Failed to log email send:', logError);
+        } else {
+          console.log(`📊 Logged email send for ${payload.candidate.email} to ${institution.target_name}`);
+        }
+      } catch (logException) {
+        console.warn('Exception while logging email:', logException);
+      }
+
       results.push({
         target_id: institution.target_id,
         target_name: institution.target_name,

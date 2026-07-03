@@ -96,6 +96,12 @@ const createBrevoMailer = ({ brevoApiKey, from }: { brevoApiKey: string; from: s
         json = null;
       }
 
+      console.log('📧 Brevo response:');
+      console.log('   Status:', response.status);
+      console.log('   Body:', body);
+      console.log('   To (recipients):', JSON.stringify(payload.to));
+      console.log('   Subject:', payload.subject);
+
       if (!response.ok) {
         throw new Error(`Brevo API error ${response.status}: ${json?.message || response.statusText || body}`);
       }

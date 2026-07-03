@@ -20,6 +20,7 @@ export const candidateSchema = z.object({
   telephone: z.string().optional().nullable(),
   user_type: z.string().optional().nullable(),
   reason: z.string().optional().nullable(),
+  quartier: z.string().optional().nullable(),
 });
 
 export const sendRecommendationEmailSchema = z.object({

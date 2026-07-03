@@ -3,17 +3,35 @@ const parseBoolean = (value: string | undefined, fallback = false): boolean => {
   return value.toLowerCase() === 'true';
 };
 
+const getEnv = (names: string[], fallback?: string): string | undefined => {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined && value !== '') return value;
+  }
+  return fallback;
+};
+
+const parseNumber = (value: string | undefined, fallback: number): number => {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 export const createMailer = () => {
   // Lazy require so the service can compile even before local npm install is done.
   // The dependency is still required at runtime for actual email sending.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const nodemailer = require('nodemailer');
 
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const secure = parseBoolean(process.env.SMTP_SECURE, false);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const host = getEnv(['SMTP_HOST', 'EMAIL_SMTP_HOST']);
+  const port = parseNumber(getEnv(['SMTP_PORT', 'EMAIL_SMTP_PORT']), 587);
+  const secure = parseBoolean(getEnv(['SMTP_SECURE', 'EMAIL_SMTP_SECURE']), port === 465);
+  const user = getEnv(['SMTP_USER', 'EMAIL_SMTP_USER']);
+  const pass = getEnv(['SMTP_PASS', 'EMAIL_SMTP_PASS']);
+  const from = getEnv(['SMTP_FROM', 'EMAIL_FROM'], 'Universearch <no-reply@universearch.com>');
+  const connectionTimeout = parseNumber(getEnv(['SMTP_CONNECTION_TIMEOUT', 'EMAIL_SMTP_CONNECTION_TIMEOUT']), 60000);
+  const greetingTimeout = parseNumber(getEnv(['SMTP_GREETING_TIMEOUT', 'EMAIL_SMTP_GREETING_TIMEOUT']), 60000);
+  const socketTimeout = parseNumber(getEnv(['SMTP_SOCKET_TIMEOUT', 'EMAIL_SMTP_SOCKET_TIMEOUT']), 60000);
   const isDevelopment = process.env.NODE_ENV !== 'production';
 
   // In development, allow placeholder credentials and use mock transporter
@@ -46,8 +64,9 @@ export const createMailer = () => {
     }
   }
 
+  console.log(`📧 SMTP transporter configured: ${host}:${port} secure=${secure} timeouts=${connectionTimeout}/${greetingTimeout}/${socketTimeout}ms`);
+
   // Production mode: use real SMTP
-  // Add tls: { rejectUnauthorized: false } for Gmail compatibility
   return nodemailer.createTransport({
     host,
     port,
@@ -56,6 +75,10 @@ export const createMailer = () => {
       user,
       pass,
     },
+    connectionTimeout,
+    greetingTimeout,
+    socketTimeout,
+    requireTLS: parseBoolean(getEnv(['SMTP_REQUIRE_TLS', 'EMAIL_SMTP_REQUIRE_TLS']), true),
     tls: {
       rejectUnauthorized: false, // Required for Gmail and some SMTP servers
     },

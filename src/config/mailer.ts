@@ -18,6 +18,8 @@ const parseNumber = (value: string | undefined, fallback: number): number => {
 };
 
 const createBrevoMailer = ({ brevoApiKey, from }: { brevoApiKey: string; from: string }) => {
+  const BREVO_FALLBACK_SENDER = getEnv(['BREVO_FALLBACK_SENDER']);
+
   const parseAddress = (value: string | string[]) => {
     if (typeof value === 'string') {
       return [{ email: value }];
@@ -26,6 +28,12 @@ const createBrevoMailer = ({ brevoApiKey, from }: { brevoApiKey: string; from: s
   };
 
   const parseSender = () => {
+    // If a fallback sender is configured (for testing), use it
+    if (BREVO_FALLBACK_SENDER) {
+      console.log('⚠️  Using BREVO_FALLBACK_SENDER for testing');
+      return { email: BREVO_FALLBACK_SENDER };
+    }
+
     const match = from.match(/^(.*)<([^>]+)>$/);
     if (!match) {
       return { email: from };
@@ -44,8 +52,13 @@ const createBrevoMailer = ({ brevoApiKey, from }: { brevoApiKey: string; from: s
 
   return {
     sendMail: async (mailOptions: any) => {
+      const parsedSender = parseSender();
+      console.log('📧 Brevo sender details:');
+      console.log('   FROM (raw):', from);
+      console.log('   Parsed sender:', JSON.stringify(parsedSender));
+
       const payload: any = {
-        sender: parseSender(),
+        sender: parsedSender,
         to: parseAddress(mailOptions.to),
         subject: mailOptions.subject,
         htmlContent: mailOptions.html,
@@ -63,6 +76,8 @@ const createBrevoMailer = ({ brevoApiKey, from }: { brevoApiKey: string; from: s
           type: attachment.contentType || 'application/octet-stream',
         }));
       }
+
+      console.log('📧 Brevo payload (sender only):', JSON.stringify({ sender: payload.sender, to: payload.to?.length }, null, 2));
 
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
